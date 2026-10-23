@@ -11,6 +11,7 @@ volumes:
   wp_data:
   prom_data:
   grafana_data:
+  loki_data:
 
 services:
   db:
@@ -75,7 +76,6 @@ services:
       - wordpress
       - phpmyadmin
 
-  # 1. Giám sát Container Metrics
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.47.2
     container_name: cadvisor
@@ -88,20 +88,18 @@ services:
     networks:
       - monitor_net
 
-  # 2. Giám sát Database MySQL Metrics
   mysqld-exporter:
     image: prom/mysqld-exporter:latest
     container_name: mysqld_exporter
     restart: always
     environment:
-      DATA_SOURCE_NAME: "root:RootSecurePasswd_2026!(db:3306)/"
+      DATA_SOURCE_NAME: "news_admin:NewsDbUserPasswd_2026!@(db:3306)/news_portal"
     networks:
       - backend_net
       - monitor_net
     depends_on:
       - db
 
-  # 3. Giám sát Web Server Nginx Metrics
   nginx-exporter:
     image: nginx/nginx-prometheus-exporter:latest
     container_name: nginx_exporter
@@ -113,7 +111,6 @@ services:
     depends_on:
       - nginx
 
-  # 4. Prometheus Server (chạy non-root: nobody)
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
@@ -127,7 +124,6 @@ services:
     networks:
       - monitor_net
 
-  # 5. Grafana Dashboard (chạy non-root)
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
@@ -144,3 +140,31 @@ services:
       - monitor_net
     depends_on:
       - prometheus
+
+  # Hệ thống log tập trung: Loki (non-root)
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    user: "10001:10001"
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - monitor_net
+
+  # Agent thu thập log: Promtail
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - monitor_net
+    depends_on:
+      - loki
