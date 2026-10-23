@@ -3,10 +3,14 @@ networks:
     driver: bridge
   backend_net:
     internal: true
+  monitor_net:
+    driver: bridge
 
 volumes:
   db_data:
   wp_data:
+  prom_data:
+  grafana_data:
 
 services:
   db:
@@ -66,6 +70,77 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl:ro
     networks:
       - frontend_net
+      - monitor_net
     depends_on:
       - wordpress
       - phpmyadmin
+
+  # 1. Giám sát Container Metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.2
+    container_name: cadvisor
+    restart: always
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - monitor_net
+
+  # 2. Giám sát Database MySQL Metrics
+  mysqld-exporter:
+    image: prom/mysqld-exporter:latest
+    container_name: mysqld_exporter
+    restart: always
+    environment:
+      DATA_SOURCE_NAME: "root:RootSecurePasswd_2026!(db:3306)/"
+    networks:
+      - backend_net
+      - monitor_net
+    depends_on:
+      - db
+
+  # 3. Giám sát Web Server Nginx Metrics
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    container_name: nginx_exporter
+    restart: always
+    command:
+      - -nginx.scrape-uri=http://nginx/metrics
+    networks:
+      - monitor_net
+    depends_on:
+      - nginx
+
+  # 4. Prometheus Server (chạy non-root: nobody)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    user: "65534:65534"
+    restart: always
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - monitor_net
+
+  # 5. Grafana Dashboard (chạy non-root)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    user: "472:472"
+    restart: always
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=GrafanaStrongPass_2026!
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - monitor_net
+    depends_on:
+      - prometheus
